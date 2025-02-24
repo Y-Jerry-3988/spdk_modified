@@ -287,7 +287,7 @@ ftl_addr_in_nvc(const struct spdk_ftl_dev *dev, ftl_addr addr)
 	assert(addr != FTL_ADDR_INVALID);
 	return addr >= dev->layout.base.total_blocks;
 }
-
+/* 将ftl_dev的总的逻辑地址转化为对应nvcache中的相对地址 */
 static inline uint64_t
 ftl_addr_to_nvc_offset(const struct spdk_ftl_dev *dev, ftl_addr addr)
 {
