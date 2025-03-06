@@ -400,6 +400,13 @@ enum spdk_bdev_io_status {
 	SPDK_MIN_BDEV_IO_STATUS = SPDK_BDEV_IO_STATUS_AIO_ERROR,
 };
 
+/* Add bdev runtime status */
+enum spdk_bdev_runtime_status {
+	SPDK_BDEV_RUNTIME_STATUS_BUSY = 1,
+	SPDK_BDEV_RUNTIME_STATUS_IDLE = 0
+};
+/* End of Modification */
+
 struct spdk_bdev_name {
 	char *name;
 	struct spdk_bdev *bdev;
@@ -679,6 +686,10 @@ struct spdk_bdev {
 
 		/** The bdev status */
 		enum spdk_bdev_status status;
+
+		/* Add Bdev Runtime Status */
+		enum spdk_bdev_runtime_status status_runtime;
+		/* End of modification */
 
 		/**
 		 * How many bdev_examine() calls are iterating claim.v2.claims. When non-zero claims

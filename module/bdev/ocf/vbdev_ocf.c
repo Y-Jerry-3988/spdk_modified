@@ -558,6 +558,17 @@ vbdev_ocf_io_submit_cb(ocf_io_t io, void *priv1, void *priv2, int error)
 	ocf_io_put(io);
 }
 
+/* Add judgement in ocf */
+bool vbdev_ocf_io_is_blocked(struct spdk_bdev_io *bdev_io)
+{
+	if (bdev_io->bdev->internal.status_runtime == SPDK_BDEV_RUNTIME_STATUS_BUSY) {
+		return true;
+	} else {
+		return false;
+	}
+}
+/* End of modification */
+
 /* Configure io parameters and send it to OCF */
 static int
 io_submit_to_ocf(struct spdk_bdev_io *bdev_io, ocf_io_t io)
@@ -565,7 +576,7 @@ io_submit_to_ocf(struct spdk_bdev_io *bdev_io, ocf_io_t io)
 	switch (bdev_io->type) {
 	case SPDK_BDEV_IO_TYPE_WRITE:
 	case SPDK_BDEV_IO_TYPE_READ:
-		ocf_core_submit_io(io);
+		ocf_core_submit_io(io); // R/W入口
 		return 0;
 	case SPDK_BDEV_IO_TYPE_FLUSH:
 		ocf_core_submit_flush(io);
@@ -583,7 +594,7 @@ io_submit_to_ocf(struct spdk_bdev_io *bdev_io, ocf_io_t io)
 
 /* Submit SPDK-IO to OCF */
 static void
-io_handle(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
+io_handle(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io) // Submit 入口
 {
 	struct vbdev_ocf *vbdev = bdev_io->bdev->ctxt;
 	ocf_io_t io = NULL;
@@ -617,7 +628,7 @@ io_handle(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
 	}
 
 	io = ocf_volume_new_io(ocf_core_get_front_volume(vbdev->ocf_core), qctx->queue, offset, len, dir, 0,
-			       flags);
+			       flags); // 从当前vbdev的core设备的volume中创建一个io
 	if (!io) {
 		err = -ENOMEM;
 		goto fail;
@@ -634,9 +645,9 @@ io_handle(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
 		goto fail;
 	}
 
-	ocf_io_set_cmpl(io, bdev_io, NULL, vbdev_ocf_io_submit_cb);
+	ocf_io_set_cmpl(io, bdev_io, NULL, vbdev_ocf_io_submit_cb); // req->io.priv1 = bdev_io
 
-	err = io_submit_to_ocf(bdev_io, io);
+	err = io_submit_to_ocf(bdev_io, io); // io submit 入口
 	if (err) {
 		goto fail;
 	}

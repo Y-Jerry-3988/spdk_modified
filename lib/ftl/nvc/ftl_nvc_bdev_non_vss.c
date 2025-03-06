@@ -70,6 +70,16 @@ write_io_cb(struct spdk_bdev_io *bdev_io, bool success, void *ctx)
 	struct ftl_io *io = ctx;
 
 	ftl_stats_bdev_io_completed(io->dev, FTL_STATS_TYPE_USER, bdev_io);
+	/* Add completion trace to log */
+	io->dev->num_inflight--;
+	if(0){
+		uint64_t tsc_rate = spdk_get_ticks_hz();
+		double complt_time_us = (double)spdk_get_ticks() * SPDK_SEC_TO_USEC / tsc_rate;
+		double latency = (double)(spdk_get_ticks()-bdev_io->internal.submit_tsc)*SPDK_SEC_TO_USEC/tsc_rate;
+		printf("%s\t%s\tC\t%lu\t%u\t%.2f\t%lu\t%u\t%ld\t%lu\t%lu\t%.2f\n", io->dev->conf.name, io->dev->conf.cache_bdev, io->trace, io->type, complt_time_us,  
+			--bdev_io->bdev->internal.measured_queue_depth, io->dev->num_inflight, bdev_io->u.bdev.num_blocks, bdev_io->u.bdev.offset_blocks, io->addr, latency);
+	}
+	/* End of modification */
 	spdk_bdev_free_io(bdev_io);
 
 	if (spdk_likely(success)) {
@@ -110,6 +120,17 @@ write_io(struct ftl_io *io)
 			ftl_abort();
 		}
 	}
+
+	/* Add io_inflight in write process */
+	io->dev->num_inflight++;
+	if(0){
+		uint64_t tsc_rate = spdk_get_ticks_hz();
+		double submit_time_us = (double)spdk_get_ticks() * SPDK_SEC_TO_USEC / tsc_rate;
+		struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(nv_cache->bdev_desc);
+		printf("%s\t%s\tS\t%lu\t%u\t%.2f\t%lu\t%u\t%ld\t%lu\t%lu\n", io->dev->conf.name, io->dev->conf.cache_bdev, io->trace, io->type, submit_time_us,  
+			++bdev->internal.measured_queue_depth, io->dev->num_inflight, io->num_blocks, ftl_addr_to_nvc_offset(dev, io->addr), io->addr);
+	}
+	/* End of modification */
 }
 
 static void

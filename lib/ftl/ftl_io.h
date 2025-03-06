@@ -66,10 +66,10 @@ struct ftl_io {
 	uint64_t			lba;
 
 	/* First address of write when sent to cache device */
-	ftl_addr			addr;
+	ftl_addr			addr; // 当前ftl_io的总的起始地址lba
 
 	/* Number of processed blocks */
-	size_t				pos;
+	size_t				pos; // 当前ftl_io中被处理的block数量
 
 	/* Number of blocks */
 	size_t				num_blocks;
@@ -81,13 +81,13 @@ struct ftl_io {
 	void				*md;
 
 	/* Number of IO vectors */
-	size_t				iov_cnt;
+	size_t				iov_cnt; // IO vector中的iov个数
 
 	/* Position within the io vector array */
-	size_t				iov_pos;
+	size_t				iov_pos; // 当前处理到IO vector中第几个iov
 
 	/* Offset within the iovec (in blocks) */
-	size_t				iov_off;
+	size_t				iov_off; // 当前处理到iov中的第几个blocks
 
 	/* Band this IO is being written to */
 	struct ftl_band			*band;
@@ -346,7 +346,7 @@ ftl_rq_from_entry(struct ftl_rq_entry *entry)
 	return rq;
 }
 
-
+/* 判断当前io中所有的block是否都被处理完且没有还没被处理的split rq */
 static inline bool
 ftl_io_done(const struct ftl_io *io)
 {

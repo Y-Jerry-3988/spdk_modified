@@ -203,4 +203,5 @@ typedef void (*vbdev_ocf_foreach_fn)(struct vbdev_ocf *, void *);
 /* Execute fn for each OCF device that is online or waits for base devices */
 void vbdev_ocf_foreach(vbdev_ocf_foreach_fn fn, void *ctx);
 
+bool vbdev_ocf_io_is_blocked(struct spdk_bdev_io *bdev_io);
 #endif
