@@ -427,7 +427,7 @@ ftl_nv_cache_get_wr_buffer(struct ftl_nv_cache *nv_cache, struct ftl_io *io)
 			/* Enough space in chunk */
 
 			/* Calculate address in NV cache */
-			address = chunk->offset + chunk->md->write_pointer;
+			address = chunk->offset + chunk->md->write_pointer; // 计算当前cache中可以被写入的起始lba地址
 
 			/* Set chunk in IO */
 			io->nv_cache_chunk = chunk;
@@ -1314,7 +1314,7 @@ ftl_nv_cache_write(struct ftl_io *io)
 		/* No free space in NV cache, resubmit request */
 		return false;
 	}
-	io->addr = ftl_addr_from_nvc_offset(dev, cache_offset);
+	io->addr = ftl_addr_from_nvc_offset(dev, cache_offset); // 获取总的起始地址
 
 	ftl_l2p_pin(io->dev, io->lba, io->num_blocks,
 		    ftl_nv_cache_pin_cb, io,

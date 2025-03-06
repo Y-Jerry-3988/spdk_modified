@@ -30,6 +30,7 @@ ftl_io_dec_req(struct ftl_io *io)
 	io->req_cnt--;
 }
 
+/* 返回当前ftl_io中iovec的起始指针 */
 struct iovec *
 ftl_io_iovec(struct ftl_io *io)
 {
@@ -92,7 +93,7 @@ ftl_iovec_num_blocks(struct iovec *iov, size_t iov_cnt)
 
 	return num_blocks;
 }
-
+/* 返回当前处理到的io中的iovec数据地址 */
 void *
 ftl_io_iovec_addr(struct ftl_io *io)
 {

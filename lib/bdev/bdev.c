@@ -29,6 +29,8 @@
 #include "spdk_internal/trace_defs.h"
 #include "spdk_internal/assert.h"
 
+#include "svmpred.h" // 添加svm模块
+#include "time.h"
 #ifdef SPDK_CONFIG_VTUNE
 #include "ittnotify.h"
 #include "ittnotify_types.h"
@@ -127,6 +129,72 @@ _bdev_init(void)
 {
 	spdk_spin_init(&g_bdev_mgr.spinlock);
 }
+/* bdev_qd_record */
+#define HIST_LEN 4
+#define FEATURE_LEN 2
+#define HIST_FEATURE_LEN  (HIST_LEN * FEATURE_LEN) // m * n 代表m个CIO的n个特征，从旧到新排列
+static double submit_ring[HIST_FEATURE_LEN] = {0};
+static double complt_ring[HIST_FEATURE_LEN] = {0};
+static double submit_elapsed_ns = 0.0;
+static double complt_elapsed_ns = 0.0;
+static FILE *log_file;
+static void
+__attribute__((constructor))
+_init_file(void)
+{
+	const char *filename = "/home/ssd/tmp/spdk/spdk_test_log/fio_ftl_bdev.log";
+    log_file = fopen(filename, "w");
+    if (log_file == NULL) {
+        perror("Cannot Open File");
+        exit(EXIT_FAILURE);
+    }
+    fprintf(log_file, "bdev_name\tS/C\tIO_ptrid\tIO_type\tSubmit/Complete_ts\tqd\tstatus Size(4KB) Offset(4KB) latency(us) infertime(ns)\n");
+}
+static struct model *model_;
+static void
+__attribute__((constructor))
+_init_model(void){
+	char model_path[200];
+	snprintf(model_path, sizeof(model_path), "/home/ssd/tmp/spdk/model_path/liblinear_train_nvme0n1_128k_64q_randwrite_1300M.model");
+	model_ = load_model(model_path);
+}
+static inline void io_submit_bdev_status_update(struct spdk_bdev_io *bdev_io)
+{
+	memmove(submit_ring, submit_ring + FEATURE_LEN, (HIST_FEATURE_LEN - FEATURE_LEN) * sizeof(double));
+	// submit_ring[HIST_FEATURE_LEN - FEATURE_LEN + 0] = (double)d2c; 
+	// submit_ring[HIST_FEATURE_LEN - FEATURE_LEN + 1] = (double)size; 
+	// submit_ring[HIST_FEATURE_LEN - FEATURE_LEN + 2] = (double)(pending_io-mismatch);
+	submit_ring[HIST_FEATURE_LEN - FEATURE_LEN + 0] = (double)(bdev_io->u.bdev.num_blocks);
+	submit_ring[HIST_FEATURE_LEN - FEATURE_LEN + 1] = (double)bdev_io->bdev->internal.measured_queue_depth;
+	double predict_label = predict_tail(model_, submit_ring);
+	if (predict_label > 0.5) {
+		bdev_io->bdev->internal.status_runtime = SPDK_BDEV_RUNTIME_STATUS_BUSY;
+	} else {
+		bdev_io->bdev->internal.status_runtime = SPDK_BDEV_RUNTIME_STATUS_IDLE;
+	}
+	// for (int i = 0; i < HIST_FEATURE_LEN; i++) {
+	// 	fprintf(fp_feat, "%.1f ", submit_ring[i]);
+	// }
+	// fprintf(fp_feat, "\n");
+	return; 
+}
+static inline void io_complt_bdev_status_update(struct spdk_bdev_io *bdev_io, double tsc_diff_us)
+{
+	memmove(complt_ring, complt_ring + FEATURE_LEN, (HIST_FEATURE_LEN - FEATURE_LEN) * sizeof(double));
+	// submit_ring[HIST_FEATURE_LEN - FEATURE_LEN + 0] = (double)d2c; 
+	// submit_ring[HIST_FEATURE_LEN - FEATURE_LEN + 1] = (double)size; 
+	// submit_ring[HIST_FEATURE_LEN - FEATURE_LEN + 2] = (double)(pending_io-mismatch);
+	complt_ring[HIST_FEATURE_LEN - FEATURE_LEN + 0] = (double)(bdev_io->u.bdev.num_blocks);
+	complt_ring[HIST_FEATURE_LEN - FEATURE_LEN + 1] = tsc_diff_us;
+	double predict_label = predict_tail(model_, complt_ring);
+	if (predict_label > 0.5) {
+		bdev_io->bdev->internal.status_runtime = SPDK_BDEV_RUNTIME_STATUS_BUSY;
+	} else {
+		bdev_io->bdev->internal.status_runtime = SPDK_BDEV_RUNTIME_STATUS_IDLE;
+	}
+	return; 
+}
+/* End of modification */
 
 typedef void (*lock_range_cb)(struct lba_range *range, void *ctx, int status);
 
@@ -456,6 +524,7 @@ bdev_ch_add_to_io_submitted(struct spdk_bdev_io *bdev_io)
 {
 	TAILQ_INSERT_TAIL(&bdev_io->internal.ch->io_submitted, bdev_io, internal.ch_link);
 	bdev_io->internal.ch->queue_depth++;
+	bdev_io->bdev->internal.measured_queue_depth++; // 在更新每个channel的queue_depth的同时更新对应bdev的queue_depth
 }
 
 static inline void
@@ -463,6 +532,7 @@ bdev_ch_remove_from_io_submitted(struct spdk_bdev_io *bdev_io)
 {
 	TAILQ_REMOVE(&bdev_io->internal.ch->io_submitted, bdev_io, internal.ch_link);
 	bdev_io->internal.ch->queue_depth--;
+	bdev_io->bdev->internal.measured_queue_depth--; // 在更新每个channel的queue_depth的同时更新对应bdev的queue_depth
 }
 
 void
@@ -1104,6 +1174,7 @@ bdev_io_increment_outstanding(struct spdk_bdev_channel *bdev_ch,
 {
 	bdev_ch->io_outstanding++;
 	shared_resource->io_outstanding++;
+	// bdev_ch->bdev->internal.measured_queue_depth++; // 在更新每个channel的outstanding IO的同时更新对应bdev的queue_depth
 }
 
 static inline void
@@ -1114,6 +1185,7 @@ bdev_io_decrement_outstanding(struct spdk_bdev_channel *bdev_ch,
 	assert(shared_resource->io_outstanding > 0);
 	bdev_ch->io_outstanding--;
 	shared_resource->io_outstanding--;
+	// bdev_ch->bdev->internal.measured_queue_depth--; // 在更新每个channel的outstanding IO的同时更新对应bdev的queue_depth
 }
 
 static void
@@ -3789,7 +3861,23 @@ bdev_io_submit(struct spdk_bdev_io *bdev_io)
 			      ch->trace_id, bdev_io->u.bdev.num_blocks,
 			      (uintptr_t)bdev_io, (uint64_t)bdev_io->type, bdev_io->internal.caller_ctx,
 			      bdev_io->u.bdev.offset_blocks, ch->queue_depth);
-
+	/* Add trace to log */
+	if(1){
+		if ((strncmp(bdev_io->bdev->name, "Base0n1p0", 9) == 0)) {
+			struct timespec start, end;
+			clock_gettime(CLOCK_MONOTONIC, &start);
+			uint64_t tsc_rate = spdk_get_ticks_hz();
+			double submit_time_us = (double)bdev_io->internal.submit_tsc * SPDK_SEC_TO_USEC / tsc_rate;
+			// double complete_time_us = submit_time_us;
+			io_submit_bdev_status_update(bdev_io);
+			clock_gettime(CLOCK_MONOTONIC, &end);
+			submit_elapsed_ns = (end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec);
+			// fprintf(log_file, "%s\tS\t%lu\t%u\t%.2f\t%lu\t%u\t%lu\t%lu\t%.2f\n", bdev_io->bdev->name, (uintptr_t)bdev_io, bdev_io->type, submit_time_us, 
+			// 	bdev_io->bdev->internal.measured_queue_depth, bdev_io->bdev->internal.status_runtime, bdev_io->u.bdev.num_blocks, bdev_io->u.bdev.offset_blocks, submit_elapsed_ns);
+		}
+	}
+	// printf("%u\t----.--\t%u\t%lu\n", bdev_io->type, bdev_io->internal.ch->queue_depth, bdev_io->u.bdev.num_blocks);
+	/* End of modification */
 	if (bdev_io->internal.f.split) {
 		bdev_io_split(bdev_io);
 		return;
@@ -7581,7 +7669,24 @@ bdev_io_update_io_stat(struct spdk_bdev_io *bdev_io, uint64_t tsc_diff)
 	struct spdk_bdev_io_stat *io_stat = bdev_io->internal.ch->stat;
 	uint64_t num_blocks = bdev_io->u.bdev.num_blocks;
 	uint32_t blocklen = bdev_io->bdev->blocklen;
-
+	/* Add trace to log */
+	if(1){
+		if ((strncmp(bdev_io->bdev->name, "Base0n1p0", 9) == 0)) {
+			struct timespec start, end;
+			clock_gettime(CLOCK_MONOTONIC, &start);
+			uint64_t tsc_rate = spdk_get_ticks_hz();
+			double submit_time_us = (double)bdev_io->internal.submit_tsc * SPDK_SEC_TO_USEC / tsc_rate;
+			double tsc_diff_us = (double)tsc_diff * SPDK_SEC_TO_USEC / tsc_rate;
+			double complete_time_us = submit_time_us + tsc_diff_us;
+			io_complt_bdev_status_update(bdev_io, tsc_diff_us);
+			clock_gettime(CLOCK_MONOTONIC, &end);
+			complt_elapsed_ns = (end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec);
+			// fprintf(log_file, "%s\tC\t%lu\t%u\t%.2f\t%lu\t%u\t%lu\t%lu\t%.2f\t%.2f\n", bdev_io->bdev->name, (uintptr_t)bdev_io, bdev_io->type, complete_time_us, 
+			// bdev_io->bdev->internal.measured_queue_depth, bdev_io->bdev->internal.status_runtime, bdev_io->u.bdev.num_blocks, bdev_io->u.bdev.offset_blocks, tsc_diff_us, complt_elapsed_ns);
+		}
+	}
+	// printf("%u\t%.2f\t%u\t%lu\n", bdev_io->type, tsc_diff_us, bdev_io->internal.ch->queue_depth, bdev_io->u.bdev.num_blocks);
+	/* End of modification */
 	if (spdk_likely(io_status == SPDK_BDEV_IO_STATUS_SUCCESS)) {
 		switch (bdev_io->type) {
 		case SPDK_BDEV_IO_TYPE_READ:
@@ -8142,7 +8247,8 @@ bdev_register(struct spdk_bdev *bdev)
 		SPDK_ERRLOG("Unable to allocate memory for internal bdev name.\n");
 		return -ENOMEM;
 	}
-
+	bdev->internal.histogram_enabled = 1; // 强制histogram生效
+	bdev->internal.histogram_in_progress = 1; // 强制histogram生效后标记为in_progress
 	bdev->internal.stat = bdev_alloc_io_stat(true);
 	if (!bdev->internal.stat) {
 		SPDK_ERRLOG("Unable to allocate I/O statistics structure.\n");
@@ -8151,7 +8257,7 @@ bdev_register(struct spdk_bdev *bdev)
 	}
 
 	bdev->internal.status = SPDK_BDEV_STATUS_READY;
-	bdev->internal.measured_queue_depth = UINT64_MAX;
+	bdev->internal.measured_queue_depth = 0; // 原先是UINT64_MAX，更改成0之后可以自己直接计数
 	bdev->internal.claim_type = SPDK_BDEV_CLAIM_NONE;
 	memset(&bdev->internal.claim, 0, sizeof(bdev->internal.claim));
 	bdev->internal.qd_poller = NULL;

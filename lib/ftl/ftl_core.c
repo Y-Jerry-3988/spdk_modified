@@ -41,6 +41,17 @@ ftl_io_cmpl_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 	ftl_trace_completion(dev, io, FTL_TRACE_COMPLETION_DISK);
 
 	ftl_io_dec_req(io);
+	/* Add completion trace to log */
+	if(0){
+		uint64_t tsc_rate = spdk_get_ticks_hz();
+		double complt_time_us = (double)spdk_get_ticks() * SPDK_SEC_TO_USEC / tsc_rate;
+		double latency = (double)(spdk_get_ticks()-bdev_io->internal.submit_tsc)*SPDK_SEC_TO_USEC/tsc_rate;
+		// 此处有bug，读请求不会初始化io->addr
+		// ftl_addr addr = (bdev_io->u.bdev.offset_blocks == io->addr) ? bdev_io->u.bdev.offset_blocks : ftl_addr_from_nvc_offset(dev, bdev_io->u.bdev.offset_blocks);
+		printf("%s\t%s\tC\t%lu\t%u\t%.2f\t%lu\t%u\t%ld\t%lu\t%lu\t%.2f\n", io->dev->conf.name, bdev_io->bdev->name, io->trace, io->type, complt_time_us,  
+			--bdev_io->bdev->internal.measured_queue_depth, io->dev->num_inflight, bdev_io->u.bdev.num_blocks, bdev_io->u.bdev.offset_blocks, bdev_io->u.bdev.offset_blocks, latency);
+	}
+	/* End of modification */
 	if (ftl_io_done(io)) {
 		ftl_io_complete(io);
 	}
@@ -225,14 +236,14 @@ _ftl_submit_read(void *_io)
 }
 
 static void
-ftl_submit_read(struct ftl_io *io)
+ftl_submit_read(struct ftl_io *io) // 根据ftl_io中的信息来依次读取最大的可连续读取的io
 {
 	struct spdk_ftl_dev *dev = io->dev;
 	ftl_addr addr;
 	int rc = 0, num_blocks;
 
 	while (io->pos < io->num_blocks) {
-		num_blocks = ftl_get_next_read_addr(io, &addr);
+		num_blocks = ftl_get_next_read_addr(io, &addr); // 判断IO当前IO读取的内容是不是连续的，num_blocks代表本轮能连续读取的最大block数量，addr代表下一次读取的起始地址
 		rc = num_blocks;
 
 		/* User LBA doesn't hold valid data (trimmed or never written to), fill with 0 and skip this block */
@@ -277,6 +288,16 @@ ftl_submit_read(struct ftl_io *io)
 		}
 
 		ftl_io_inc_req(io);
+		/* Add submission trace to log */
+		if(0){
+			uint64_t tsc_rate = spdk_get_ticks_hz();
+			double submit_time_us = (double)spdk_get_ticks() * SPDK_SEC_TO_USEC / tsc_rate;
+			char* device = ftl_addr_in_nvc(dev, addr) ? io->dev->conf.cache_bdev : io->dev->conf.base_bdev;
+			struct spdk_bdev *bdev = ftl_addr_in_nvc(dev, addr) ? spdk_bdev_desc_get_bdev(dev->nv_cache.bdev_desc) : spdk_bdev_desc_get_bdev(dev->base_bdev_desc);
+			printf("%s\t%s\tS\t%lu\t%u\t%.2f\t%lu\t%u\t%d\t%lu\t%lu\n", io->dev->conf.name, device, io->trace, io->type, submit_time_us,  
+				++bdev->internal.measured_queue_depth, io->dev->num_inflight, num_blocks, ftl_addr_in_nvc(dev, addr) ? ftl_addr_to_nvc_offset(io->dev, addr) : addr, addr);
+		}
+		/* End of modification */
 		ftl_io_advance(io, num_blocks);
 	}
 
@@ -706,7 +727,7 @@ ftl_process_io_queue(struct spdk_ftl_dev *dev)
 		ftl_add_io_activity(dev);
 	}
 
-	while (!TAILQ_EMPTY(&dev->wr_sq) && !ftl_nv_cache_throttle(dev)) {
+	while (!TAILQ_EMPTY(&dev->wr_sq) && !ftl_nv_cache_throttle(dev)) { //此处判断nv_cache是否容量已满或者处于性能瓶颈阶段
 		io = TAILQ_FIRST(&dev->wr_sq);
 		TAILQ_REMOVE(&dev->wr_sq, io, queue_entry);
 		assert(io->type == FTL_IO_WRITE);
