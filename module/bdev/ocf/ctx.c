@@ -311,7 +311,7 @@ cleaner_poll(void *arg)
 	ocf_cleaner_t cleaner = arg;
 	struct cleaner_priv *priv = ocf_cleaner_get_priv(cleaner);
 
-	if (spdk_get_ticks() >= priv->next_run) {
+	if (spdk_get_ticks() >= priv->next_run) { // 此处的next->run需要改为opportunistic策略
 		ocf_cleaner_run(cleaner, priv->mngt_queue);
 		return SPDK_POLLER_BUSY;
 	}
