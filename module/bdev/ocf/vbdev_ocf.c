@@ -559,14 +559,14 @@ vbdev_ocf_io_submit_cb(ocf_io_t io, void *priv1, void *priv2, int error)
 }
 
 /* Add judgement in ocf */
-bool vbdev_ocf_io_is_blocked(struct spdk_bdev_io *bdev_io)
-{
-	if (bdev_io->bdev->internal.status_runtime == SPDK_BDEV_RUNTIME_STATUS_BUSY) {
-		return true;
-	} else {
-		return false;
-	}
-}
+// bool vbdev_ocf_io_is_blocked(struct spdk_bdev_io *bdev_io)
+// {
+// 	if (bdev_io->bdev->internal.status_runtime == SPDK_BDEV_RUNTIME_STATUS_BUSY) {
+// 		return true;
+// 	} else {
+// 		return false;
+// 	}
+// }
 /* End of modification */
 
 /* Configure io parameters and send it to OCF */
