@@ -142,7 +142,7 @@ static void
 __attribute__((constructor))
 _init_file(void)
 {
-	const char *filename = "/home/ssd/tmp/spdk/spdk_test_log/fio_ftl_bdev.log";
+	const char *filename = "./fio_ftl_bdev.log";
     log_file = fopen(filename, "w");
     if (log_file == NULL) {
         perror("Cannot Open File");
@@ -155,7 +155,7 @@ static void
 __attribute__((constructor))
 _init_model(void){
 	char model_path[200];
-	snprintf(model_path, sizeof(model_path), "/home/ssd/tmp/spdk/model_path/liblinear_train_nvme0n1_128k_64q_randwrite_1300M.model");
+	snprintf(model_path, sizeof(model_path), "./model_path/liblinear_train_nvme0n1_128k_64q_randwrite_1300M.model");
 	model_ = load_model(model_path);
 }
 static inline void io_submit_bdev_status_update(struct spdk_bdev_io *bdev_io)
